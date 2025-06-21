@@ -16,20 +16,11 @@ on:
                 options:
                     - 'arm64'
                     - 'arm'
-            COMPILER_CHOICE:
-                type: choice
-                description: 'Compiler to use for building the kernel:'
-                required: true
-                default: 'GCC_LLVM'
-                options:
-                    - 'GCC_LLVM'
-                    - 'AOSP_CLANG_LTO'
-                    - 'CUSTOM'
             KERNEL_COMPILER_TOOLCHAIN:
-                description: 'Direct link to custom compiler prebuilt toolchain (only if COMPILER_CHOICE is CUSTOM):'
+                description: 'Direct link to custom compiler prebuilt toolchain (leave blank if not required):'
                 required: false
             KERNEL_COMPILER_PREFIX:
-                description: 'Path prefix for custom prebuilt toolchain (only if COMPILER_CHOICE is CUSTOM):'
+                description: 'Path prefix for custom prebuilt toolchain (must define if custom toolchain, otherwise leave blank):'
                 required: false
             KERNEL_CONFIGS:
                 description: 'Space-seperated list of kernel configs by order (!IMPORTANT AND DANGEROUS!):'
@@ -44,6 +35,15 @@ jobs:
           with:
            fetch-depth: 0
 
+        - name: ccache cache
+          uses: actions/cache@v4
+          with:
+            path: ~/.ccache
+            key: ${{ runner.os }}-ccache-${{ github.ref }}-${{ github.sha }}
+            restore-keys: |
+              ${{ runner.os }}-ccache-${{ github.ref }}-
+              ${{ runner.os }}-ccache-
+
         - name: 'Validate workflow options'
           run: |
             if
@@ -56,7 +56,7 @@ jobs:
                     echo "--- Kernel source git link and branch points to an invalid git repo, please specify them properly! ---"
                     exit 1
                 fi
-                if [ "${{ github.event.inputs.COMPILER_CHOICE }}" == "CUSTOM" ] && [ ! -z "${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }}" ]; then
+                if [ ! -z ${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }} ]; then
                     if curl -sIL "${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }}" | grep -i "content-disposition: attachment" > /dev/null || curl -sIL "${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }}" | grep -i "content-type: application/octet-stream" > /dev/null; then
                         echo "--- Custom compiler prebuilt toolchain link is a valid direct download link ---"
                     else
@@ -113,8 +113,19 @@ jobs:
             # Install kernel build dependencies
             sudo apt build-dep -y linux
 
+            # Install clang and LLVM
+            LATEST_LLVM_TOOLCHAIN=$(curl -sSf https://api.github.com/repos/llvm/llvm-project/releases/latest | grep browser_download_url | cut -d '"' -f 4 | grep -wi "Linux-X64.tar.xz"$)
+            wget $LATEST_LLVM_TOOLCHAIN -O ./LLVM-latest-Linux-X64.tar.xz
+            tar --wildcards -xvpf ./LLVM-latest-Linux-X64.tar.xz --warning=no-file-changed --ignore-failed-read || true
+            rm -rf *.tar.xz
+
+            # Install GCC for aarch64 and arm(32)
+            wget https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-linux-gnueabihf.tar.xz https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+            for file in *.tar.xz; do tar --wildcards -xvpf $file --warning=no-file-changed --ignore-failed-read || true; done
+            rm -rf *.tar.xz
+
             # Install some general dependencies
-            sudo apt-get install -y p7zip-full tar bzip2 unrar gzip zip unzip python3-dev repo
+            sudo apt-get install -y p7zip-full tar bzip2 unrar gzip zip unzip python3-dev repo ccache
 
             # Download and extract compiler toolchain
             extract ()
@@ -123,7 +134,6 @@ jobs:
                 case $1 in
                 *.tar.bz2)   tar xjf $1   ;;
                 *.tar.gz)    tar xzf $1   ;;
-                *.tar.xz)    tar xf $1    ;;
                 *.bz2)       bunzip2 $1   ;;
                 *.rar)       unrar x $1   ;;
                 *.gz)        gunzip $1    ;;
@@ -134,6 +144,7 @@ jobs:
                 *.Z)         uncompress $1;;
                 *.7z)        7z x $1      ;;
                 *.deb)       ar x $1      ;;
+                *.tar.xz)    tar xf $1    ;;
                 *)           echo "'$1' cannot be extracted via extract()" ;;
                 esac
             else
@@ -141,34 +152,19 @@ jobs:
             fi
             }
 
-            if [ "${{ github.event.inputs.COMPILER_CHOICE }}" == "AOSP_CLANG_LTO" ]; then
-                mkdir ./aosp-clang/
-                wget https://github.com/ZyCromerZ/Clang/releases/download/19.0.0-20240409/Clang-19.0.0-20240409.tar.gz -P ./aosp-clang/
-                cd ./aosp-clang/
-                extract ./*
-                cd ../
-            fi
-
-            if [ "${{ github.event.inputs.COMPILER_CHOICE }}" == "CUSTOM" ] && [ ! -z "${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }}" ]; then
+            if [ ! -z ${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }} ]; then
                 mkdir ./compiler-toolchain/
                 wget ${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }} -P ./compiler-toolchain/
+
                 cd ./compiler-toolchain/
                 extract ./*
                 cd ../
             fi
 
-            if [ "${{ github.event.inputs.COMPILER_CHOICE }}" == "GCC_LLVM" ]; then
-                # Install clang and LLVM
-                LATEST_LLVM_TOOLCHAIN=$(curl -sSf https://api.github.com/repos/llvm/llvm-project/releases/latest | grep browser_download_url | cut -d '"' -f 4 | grep -wi "Linux-X64.tar.xz"$)
-                wget $LATEST_LLVM_TOOLCHAIN -O ./LLVM-latest-Linux-X64.tar.xz
-                tar --wildcards -xvpf ./LLVM-latest-Linux-X64.tar.xz --warning=no-file-changed --ignore-failed-read || true
-                rm -rf *.tar.xz
-
-                # Install GCC for aarch64 and arm(32)
-                wget https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-linux-gnueabihf.tar.xz https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
-                for file in *.tar.xz; do tar --wildcards -xvpf $file --warning=no-file-changed --ignore-failed-read || true; done
-                rm -rf *.tar.xz
-            fi
+        - name: Configure ccache
+          run: |
+            ccache -M 5G
+            ccache -z
 
         - name: 'Clone kernel source'
           run: |
@@ -208,29 +204,20 @@ jobs:
             # Delete files that may conflict with kernel functionality
             rm -rf ./android/abi_gki_protected_exports*
 
-        - name: 'Set Compiler Environment Variables'
-          run: |
-            if [ "${{ github.event.inputs.COMPILER_CHOICE }}" == "AOSP_CLANG_LTO" ]; then
-                echo "COMPILER_ARGS=LLVM=1 CC=clang" >> $GITHUB_ENV
-                echo "PATH=$(realpath ~/**/aosp-clang/bin):$PATH" >> $GITHUB_ENV
-            elif [ "${{ github.event.inputs.COMPILER_CHOICE }}" == "CUSTOM" ]; then
-                echo "COMPILER_ARGS=CC=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}gcc LD=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}ld.lld AR=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-ar NM=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-nm STRIP=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-strip OBJCOPY=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-objcopy OBJDUMP=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-objdump OBJSIZE=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-size READELF=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-readelf HOSTCC=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}clang HOSTCXX=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}clang++ HOSTAR=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-ar HOSTLD=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}ld.lld" >> $GITHUB_ENV
-            else # GCC_LLVM
-                if [ "${{ github.event.inputs.KERNEL_ARCH }}" == "arm" ]; then
-                    echo "COMPILER_ARGS=CC=$(realpath ~/**/arm-gnu-toolchain-*-x86_64-arm-none-linux-gnu*/bin)/arm-none-linux-gnueabihf-gcc LD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld AR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar NM=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-nm STRIP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-strip OBJCOPY=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objcopy OBJDUMP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objdump OBJSIZE=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-size READELF=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-readelf HOSTCC=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang HOSTCXX=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang++ HOSTAR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar HOSTLD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld" >> $GITHUB_ENV
-                else
-                    echo "COMPILER_ARGS=CC=$(realpath ~/**/arm-gnu-toolchain-*-x86_64-aarch64-none-linux-gnu*/bin)/aarch64-none-linux-gnu-gcc LD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld AR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar NM=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-nm STRIP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-strip OBJCOPY=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objcopy OBJDUMP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objdump OBJSIZE=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-size READELF=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-readelf HOSTCC=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang HOSTCXX=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang++ HOSTAR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar HOSTLD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld" >> $GITHUB_ENV
-                fi
-            fi
-
         - name: 'Generate the kernel .config file'
           working-directory: './kernel-src'
           run: |
             shopt -s globstar
-            make ARCH=${{ github.event.inputs.KERNEL_ARCH }} ${{ env.COMPILER_ARGS }} -j$(nproc --all) O=out ${{ github.event.inputs.KERNEL_CONFIGS }}
 
-            if [ "${{ github.event.inputs.COMPILER_CHOICE }}" == "AOSP_CLANG_LTO" ]; then
-                echo 'CONFIG_LTO_CLANG_FULL=y' >> out/.config
+            # Generate kernel config using make for GCC/LLVM
+            if [ ! -z ${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }} ]; then
+                make ARCH=${{ github.event.inputs.KERNEL_ARCH }} CC="ccache $(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}gcc" LD=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}ld.lld AR=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-ar NM=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-nm STRIP=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-strip OBJCOPY=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-objcopy OBJDUMP=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-objdump OBJSIZE=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-size READELF=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-readelf HOSTCC=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}clang HOSTCXX=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}clang++ HOSTAR=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-ar HOSTLD=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}ld.lld -j$(nproc --all) O=out ${{ github.event.inputs.KERNEL_CONFIGS }}
+            else
+                if [ ${{ github.event.inputs.KERNEL_ARCH }} == 'arm' ]; then
+                    make ARCH=${{ github.event.inputs.KERNEL_ARCH }} CC="ccache $(realpath ~/**/arm-gnu-toolchain-*-x86_64-arm-none-linux-gnu*/bin)/arm-none-linux-gnueabihf-gcc" LD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld AR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar NM=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-nm STRIP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-strip OBJCOPY=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objcopy OBJDUMP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objdump OBJSIZE=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-size READELF=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-readelf HOSTCC=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang HOSTCXX=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang++ HOSTAR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar HOSTLD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld -j$(nproc --all) O=out ${{ github.event.inputs.KERNEL_CONFIGS }}
+                else
+                    make ARCH=${{ github.event.inputs.KERNEL_ARCH }} CC="ccache $(realpath ~/**/arm-gnu-toolchain-*-x86_64-aarch64-none-linux-gnu*/bin)/aarch64-none-linux-gnu-gcc" LD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld AR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar NM=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-nm STRIP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-strip OBJCOPY=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objcopy OBJDUMP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objdump OBJSIZE=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-size READELF=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-readelf HOSTCC=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang HOSTCXX=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang++ HOSTAR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar HOSTLD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld -j$(nproc --all) O=out ${{ github.event.inputs.KERNEL_CONFIGS }}
+                fi
             fi
 
             echo 'CONFIG_LOCALVERSION_AUTO=n' >> out/.config
@@ -241,7 +228,20 @@ jobs:
           working-directory: './kernel-src'
           run: |
             shopt -s globstar
-            make ARCH=${{ github.event.inputs.KERNEL_ARCH }} ${{ env.COMPILER_ARGS }} -j$(nproc --all) O=out Image.gz-dtb dtbo.img
+
+            # Compile using make for GCC/LLVM
+            if [ ! -z ${{ github.event.inputs.KERNEL_COMPILER_TOOLCHAIN }} ]; then
+                make ARCH=${{ github.event.inputs.KERNEL_ARCH }} CC="ccache $(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}gcc" LD=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}ld.lld AR=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-ar NM=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-nm STRIP=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-strip OBJCOPY=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-objcopy OBJDUMP=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-objdump OBJSIZE=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-size READELF=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-readelf HOSTCC=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}clang HOSTCXX=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}clang++ HOSTAR=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}llvm-ar HOSTLD=$(realpath ~/**/compiler-toolchain)/${{ github.event.inputs.KERNEL_COMPILER_PREFIX }}ld.lld -j$(nproc --all) O=out Image.gz-dtb dtbo.img
+            else
+                if [ ${{ github.event.inputs.KERNEL_ARCH }} == 'arm' ]; then
+                    make ARCH=${{ github.event.inputs.KERNEL_ARCH }} CC="ccache $(realpath ~/**/arm-gnu-toolchain-*-x86_64-arm-none-linux-gnu*/bin)/arm-none-linux-gnueabihf-gcc" LD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld AR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar NM=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-nm STRIP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-strip OBJCOPY=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objcopy OBJDUMP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objdump OBJSIZE=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-size READELF=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-readelf HOSTCC=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang HOSTCXX=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang++ HOSTAR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar HOSTLD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld -j$(nproc --all) O=out Image.gz-dtb dtbo.img
+                else
+                    make ARCH=${{ github.event.inputs.KERNEL_ARCH }} CC="ccache $(realpath ~/**/arm-gnu-toolchain-*-x86_64-aarch64-none-linux-gnu*/bin)/aarch64-none-linux-gnu-gcc" LD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld AR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar NM=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-nm STRIP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-strip OBJCOPY=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objcopy OBJDUMP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objdump OBJSIZE=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-size READELF=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-readelf HOSTCC=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang HOSTCXX=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang++ HOSTAR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar HOSTLD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld -j$(nproc --all) O=out Image.gz-dtb dtbo.img
+                fi
+            fi
+
+        - name: Show ccache statistics
+          run: ccache -s
 
         - name: 'Prepare and Package with AnyKernel3'
           run: |
@@ -274,3 +274,4 @@ jobs:
           with:
             name: dtbo.img
             path: kernel-src/out/arch/${{ github.event.inputs.KERNEL_ARCH }}/boot/dtbo.img
+}
