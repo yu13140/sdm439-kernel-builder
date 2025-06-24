@@ -106,6 +106,7 @@ jobs:
 
         - name: 'Setup dependencies and environment'
           run: |
+            set -o pipefail
             # Setup package sources and apt
             sudo cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources~
             sudo sed -Ei 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
@@ -118,7 +119,7 @@ jobs:
             if [ "${{ github.event.inputs.KERNEL_COMPILER }}" == 'Proton Clang' ]; then
                 echo "--- Downloading and setting up Proton Clang ---"
                 mkdir ./proton-clang-toolchain
-                PROTON_CLANG_URL=$(curl -s https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | grep "browser_download_url.*\.tar\.gz" | cut -d '"' -f 4)
+                PROTON_CLANG_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | grep "browser_download_url.*\.tar\.gz" | cut -d '"' -f 4)
                 wget ${PROTON_CLANG_URL} -O proton-clang.tar.gz
                 tar -xf proton-clang.tar.gz -C ./proton-clang-toolchain
                 rm -f proton-clang.tar.gz
