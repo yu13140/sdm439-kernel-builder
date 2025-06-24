@@ -106,7 +106,7 @@ jobs:
 
         - name: 'Setup dependencies and environment'
           run: |
-            set -o pipefail
+            set -e
             # Setup package sources and apt
             sudo cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources~
             sudo sed -Ei 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
@@ -117,11 +117,16 @@ jobs:
 
             # Install Proton Clang if selected
             if [ "${{ github.event.inputs.KERNEL_COMPILER }}" == 'Proton Clang' ]; then
-                echo "--- Downloading and setting up Proton Clang ---"
+                echo "--- Downloading and setting up Proton Clang using direct link ---"
                 mkdir ./proton-clang-toolchain
-                PROTON_CLANG_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | grep "browser_download_url.*\.tar\.gz" | cut -d '"' -f 4)
-                wget ${PROTON_CLANG_URL} -O proton-clang.tar.gz
-                tar -xf proton-clang.tar.gz -C ./proton-clang-toolchain
+                
+                # Using the direct link you provided
+                PROTON_CLANG_URL="https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.tar.gz"
+                
+                echo "Downloading from: $PROTON_CLANG_URL"
+                wget "$PROTON_CLANG_URL" -O proton-clang.tar.gz
+                # Use --strip-components=1 to remove the top-level directory from the archive
+                tar -xf proton-clang.tar.gz -C ./proton-clang-toolchain --strip-components=1
                 rm -f proton-clang.tar.gz
             fi
 
