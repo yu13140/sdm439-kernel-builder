@@ -241,18 +241,24 @@ jobs:
           if: ${{ github.event.inputs.KPM_ENABLE }} == 'true'
           run: |
             cd $GITHUB_WORKSPACE/$kernel-src
-            cd out/arch/${{ github.event.inputs.KERNEL_ARCH }}/boot
-            wget https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux -O patch
-            chmod 777 patch
+            cd out/arch/${{ github.event.inputs.KERNEL_ARCH }}/boot            
             cp /tmp/bin/magiskboot ./
+            cp /tmp/bin/extract-ikconfig.sh ./
             ./magiskboot split Image.gz-dtb
-            mv kernel Image
-            ./patch
-            gzip -c oImage > oImage.gz
-            cat oImage.gz kernel_dtb > oImage.gz-dtb
-            rm -rf patch magiskboot Image.gz-dtb kernel_dtb Image
-            mv oImage.gz-dtb Image.gz-dtb
-            echo "Hook Image successfully !"
+            if [[ $(../extract-ikconfig.sh kernel | grep "CONFIG_KPM" | sed 's/CONFIG_KPM=//g') == "y" ]]; then
+              wget https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux -O patch
+              chmod 777 patch
+              mv kernel Image
+              ./patch
+              gzip -c oImage > oImage.gz
+              cat oImage.gz kernel_dtb > oImage.gz-dtb
+              rm -rf patch magiskboot Image.gz-dtb kernel_dtb Image
+              mv oImage.gz-dtb Image.gz-dtb
+              echo "Hook Image successfully !"
+            else
+              echo "CONFIG_KPM is not set !"
+              rm -rf magiskboot extract-ikconfig.sh kernel kernel_dtb
+            fi
 
         - name: 'Prepare and Package with AnyKernel3'
           run: |
