@@ -25,6 +25,11 @@ on:
             KERNEL_CONFIGS:
                 description: 'Space-seperated list of kernel configs by order (!IMPORTANT AND DANGEROUS!):'
                 required: true
+            KPM_ENABLE:
+                description: 'Enable KPM for the kernel (Only use it for SukiSU-Ultra)'
+                required: true
+                type: boolean
+                default: true
 
 jobs:
     build:
@@ -190,6 +195,12 @@ jobs:
             # Delete files that may conflict with kernel functionality
             rm -rf ./android/abi_gki_protected_exports*
 
+        - name: Setup ccache
+          uses: hendrikmuhs/ccache-action@v1.2
+          with:
+            key: build-kernel-$(date +"%Y%m%d%H%M%S")
+            max-size: 2G
+
         - name: 'Generate the kernel .config file'
           working-directory: './kernel-src'
           run: |
@@ -225,6 +236,23 @@ jobs:
                     make ARCH=${{ github.event.inputs.KERNEL_ARCH }} CC=$(realpath ~/**/arm-gnu-toolchain-*-x86_64-aarch64-none-linux-gnu*/bin)/aarch64-none-linux-gnu-gcc LD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld AR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar NM=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-nm STRIP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-strip OBJCOPY=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objcopy OBJDUMP=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-objdump OBJSIZE=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-size READELF=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-readelf HOSTCC=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang HOSTCXX=$(realpath ~/**/LLVM-*-Linux-X64/bin)/clang++ HOSTAR=$(realpath ~/**/LLVM-*-Linux-X64/bin)/llvm-ar HOSTLD=$(realpath ~/**/LLVM-*-Linux-X64/bin)/ld.lld -j$(nproc --all) O=out Image.gz-dtb dtbo.img
                 fi
             fi
+
+        - name: KPM Patcher (Experiment)
+          if: ${{ github.event.inputs.KPM_ENABLE }} == 'true'
+          run: |
+            cd $GITHUB_WORKSPACE/$kernel-src
+            cd out/arch/${{ github.event.inputs.KERNEL_ARCH }}/boot
+            wget https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux -O patch
+            chmod 777 patch
+            cp /tmp/bin/magiskboot ./
+            ./magiskboot split Image.gz-dtb
+            mv kernel Image
+            ./patch
+            gzip -c oImage > oImage.gz
+            cat oImage.gz kernel_dtb > oImage.gz-dtb
+            rm -rf patch magiskboot Image.gz-dtb kernel_dtb Image
+            mv oImage.gz-dtb Image.gz-dtb
+            echo "Hook Image successfully !"
 
         - name: 'Prepare and Package with AnyKernel3'
           run: |
