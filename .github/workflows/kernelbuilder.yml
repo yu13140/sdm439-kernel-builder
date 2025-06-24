@@ -240,8 +240,8 @@ jobs:
         - name: KPM Patcher (Experiment)
           if: ${{ github.event.inputs.KPM_ENABLE }} == 'true'
           run: |
-            cd $GITHUB_WORKSPACE/$kernel-src
-            cd out/arch/${{ github.event.inputs.KERNEL_ARCH }}/boot            
+            cd $GITHUB_WORKSPACE/kernel-src
+            cd out/arch/${{ github.event.inputs.KERNEL_ARCH }}/boot
             cp /tmp/bin/magiskboot ./
             cp /tmp/bin/extract-ikconfig.sh ./
             ./magiskboot split Image.gz-dtb
